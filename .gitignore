@@ -1,0 +1,22 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+
+# Test / build artifacts
+*.test
+*.out
+coverage.out
+coverage.txt
+
+# Go workspace / vendor
+vendor/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
