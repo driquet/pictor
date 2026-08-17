@@ -86,7 +86,9 @@ func (f *File) Encode() ([]byte, []Warning, error) {
 	}
 	order.PutUint16(buf[2:4], 0x002A)
 	order.PutUint32(buf[4:8], e.plans[root].off)
-	forEachIFD(root, func(ifd *IFD) { e.writeIFD(buf, ifd) })
+	forEachIFD(root, func(ifd *IFD) {
+		e.writeIFD(buf, ifd)
+	})
 	for _, b := range e.blobs {
 		copy(buf[b.off:], b.data)
 	}
@@ -265,7 +267,9 @@ func (e *encoder) writeIFD(buf []byte, ifd *IFD) {
 		order.PutUint32(v, e.plans[child].off)
 		ws = append(ws, wire{tag: tag, typ: TypeLong, count: 1, raw: v})
 	}
-	sort.SliceStable(ws, func(i, j int) bool { return ws[i].tag < ws[j].tag })
+	sort.SliceStable(ws, func(i, j int) bool {
+		return ws[i].tag < ws[j].tag
+	})
 
 	off := p.off
 	order.PutUint16(buf[off:], uint16(len(ws)))
@@ -384,7 +388,9 @@ func (a *allocator) size() uint32 {
 }
 
 func (a *allocator) insert(s span) {
-	i := sort.Search(len(a.used), func(i int) bool { return a.used[i].off >= s.off })
+	i := sort.Search(len(a.used), func(i int) bool {
+		return a.used[i].off >= s.off
+	})
 	a.used = append(a.used, span{})
 	copy(a.used[i+1:], a.used[i:])
 	a.used[i] = s

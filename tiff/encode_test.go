@@ -5,61 +5,57 @@ import (
 	"encoding/binary"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // --- allocator unit tests ----------------------------------------------------
 
 func TestAllocatorEOFAppend(t *testing.T) {
-	r := require.New(t)
 	a := newAllocator() // header [0,8) reserved
-	r.EqualValues(8, a.alloc(10), "first alloc")
-	r.EqualValues(18, a.alloc(4), "second alloc")
-	r.EqualValues(22, a.size())
+	assert.EqualValues(t, 8, a.alloc(10), "first alloc")
+	assert.EqualValues(t, 18, a.alloc(4), "second alloc")
+	assert.EqualValues(t, 22, a.size())
 }
 
 func TestAllocatorAlignment(t *testing.T) {
-	r := require.New(t)
 	a := newAllocator()
 	a.alloc(5) // [8,13), odd end
-	r.EqualValues(14, a.alloc(4), "alloc after odd must round to word-aligned")
+	assert.EqualValues(t, 14, a.alloc(4), "alloc after odd must round to word-aligned")
 }
 
 func TestAllocatorGapFit(t *testing.T) {
-	r := require.New(t)
 	a := newAllocator()
 	// Reserve a pinned blob at 40, leaving a gap [8,40).
-	r.True(a.reserve(40, 20), "reserve failed")
-	r.EqualValues(8, a.alloc(16), "gap-fit alloc")   // fits in the gap before the pin
-	r.EqualValues(60, a.alloc(20), "post-pin alloc") // remaining gap [24,40) too small -> after pin
+	require.True(t, a.reserve(40, 20), "reserve failed")
+	assert.EqualValues(t, 8, a.alloc(16), "gap-fit alloc")   // fits in the gap before the pin
+	assert.EqualValues(t, 60, a.alloc(20), "post-pin alloc") // remaining gap [24,40) too small -> after pin
 }
 
 func TestAllocatorReserveOverlap(t *testing.T) {
-	r := require.New(t)
 	a := newAllocator()
-	r.False(a.reserve(4, 8), "reserve overlapping header should fail")
-	r.True(a.reserve(100, 10), "reserve should succeed")
-	r.False(a.reserve(105, 10), "reserve overlapping a pin should fail")
+	assert.False(t, a.reserve(4, 8), "reserve overlapping header should fail")
+	require.True(t, a.reserve(100, 10), "reserve should succeed")
+	assert.False(t, a.reserve(105, 10), "reserve overlapping a pin should fail")
 }
 
 // --- tree comparison ---------------------------------------------------------
 
 func sameTree(t *testing.T, a, b *IFD, path string) {
 	t.Helper()
-	r := require.New(t)
-	r.Equal(a == nil, b == nil, "%s: nil mismatch", path)
+	require.Equal(t, a == nil, b == nil, "%s: nil mismatch", path)
 	if a == nil {
 		return
 	}
-	r.Equal(len(a.Entries), len(b.Entries), "%s: entry count mismatch", path)
+	require.Equal(t, len(a.Entries), len(b.Entries), "%s: entry count mismatch", path)
 	for _, ea := range a.Entries {
 		eb, ok := findEntry(b, ea.Tag)
-		r.True(ok, "%s: tag 0x%04X missing after round-trip", path, ea.Tag)
-		r.Equal(ea.Type, eb.Type, "%s: tag 0x%04X type changed", path, ea.Tag)
-		r.EqualValues(ea.Count, eb.Count, "%s: tag 0x%04X count changed", path, ea.Tag)
-		r.True(bytes.Equal(ea.Raw, eb.Raw), "%s: tag 0x%04X raw changed: %x vs %x", path, ea.Tag, ea.Raw, eb.Raw)
+		require.True(t, ok, "%s: tag 0x%04X missing after round-trip", path, ea.Tag)
+		assert.Equal(t, ea.Type, eb.Type, "%s: tag 0x%04X type changed", path, ea.Tag)
+		assert.EqualValues(t, ea.Count, eb.Count, "%s: tag 0x%04X count changed", path, ea.Tag)
+		assert.True(t, bytes.Equal(ea.Raw, eb.Raw), "%s: tag 0x%04X raw changed: %x vs %x", path, ea.Tag, ea.Raw, eb.Raw)
 	}
-	r.Equal(len(a.Subs), len(b.Subs), "%s: sub count mismatch", path)
+	require.Equal(t, len(a.Subs), len(b.Subs), "%s: sub count mismatch", path)
 	for id, sa := range a.Subs {
 		sameTree(t, sa, b.Subs[id], path+"/sub")
 	}
@@ -71,7 +67,6 @@ func sameTree(t *testing.T, a, b *IFD, path string) {
 func TestEncodeSemanticRoundTrip(t *testing.T) {
 	for _, order := range []binary.ByteOrder{binary.LittleEndian, binary.BigEndian} {
 		t.Run(orderName(order), func(t *testing.T) {
-			r := require.New(t)
 			ifd0 := []entry{
 				{0x010F, TypeASCII, 6, ascii("Canon")},
 				{0x0112, TypeShort, 1, short(order, 6)},
@@ -84,30 +79,29 @@ func TestEncodeSemanticRoundTrip(t *testing.T) {
 			blob := buildTIFF(order, ifd0, exifSub, gps)
 
 			f1, err := DecodeBytes(blob, exifOpts()...)
-			r.NoError(err)
+			require.NoError(t, err)
 			out, warns, err := f1.Encode()
-			r.NoError(err)
-			r.Empty(warns, "unexpected warnings")
+			require.NoError(t, err)
+			assert.Empty(t, warns, "unexpected warnings")
 			f2, err := DecodeBytes(out, exifOpts()...)
-			r.NoError(err)
-			r.Empty(f2.Errs, "re-decode faults")
-			r.Equal(order, f2.Order, "order not preserved")
+			require.NoError(t, err)
+			require.Empty(t, f2.Errs, "re-decode faults")
+			assert.Equal(t, order, f2.Order, "order not preserved")
 			sameTree(t, f1.Root, f2.Root, "root")
 
 			// Idempotence: encode -> decode -> encode is byte-stable.
 			out2, _, err := f2.Encode()
-			r.NoError(err)
-			r.True(bytes.Equal(out, out2), "Encode not idempotent (output bytes differ on re-encode)")
+			require.NoError(t, err)
+			assert.True(t, bytes.Equal(out, out2), "Encode not idempotent (output bytes differ on re-encode)")
 		})
 	}
 }
 
 func TestEncodeEditTag(t *testing.T) {
-	r := require.New(t)
 	order := binary.LittleEndian
 	blob := buildTIFF(order, []entry{{0x0112, TypeShort, 1, short(order, 1)}}, nil, nil)
 	f, err := DecodeBytes(blob, exifOpts()...)
-	r.NoError(err)
+	require.NoError(t, err)
 	// Flip Orientation 1 -> 8 in place.
 	for i := range f.Root.Entries {
 		if f.Root.Entries[i].Tag == 0x0112 {
@@ -115,17 +109,16 @@ func TestEncodeEditTag(t *testing.T) {
 		}
 	}
 	out, _, err := f.Encode()
-	r.NoError(err)
+	require.NoError(t, err)
 	f2, _ := DecodeBytes(out, exifOpts()...)
 	e, ok := findEntry(f2.Root, 0x0112)
-	r.True(ok, "edited Orientation not persisted")
-	r.EqualValues(8, order.Uint16(e.Raw))
+	require.True(t, ok, "edited Orientation not persisted")
+	assert.EqualValues(t, 8, order.Uint16(e.Raw))
 }
 
 // --- pins --------------------------------------------------------------------
 
 func TestEncodePinHonoured(t *testing.T) {
-	r := require.New(t)
 	order := binary.LittleEndian
 	maker := bytes.Repeat([]byte{0xAB}, 12)
 	f := &File{
@@ -138,16 +131,15 @@ func TestEncodePinHonoured(t *testing.T) {
 		},
 	}
 	out, warns, err := f.Encode()
-	r.NoError(err)
-	r.Empty(warns, "unexpected warnings")
-	r.True(bytes.Equal(out[200:212], maker), "MakerNote not pinned at offset 200: %x", out[200:212])
+	require.NoError(t, err)
+	assert.Empty(t, warns, "unexpected warnings")
+	assert.True(t, bytes.Equal(out[200:212], maker), "MakerNote not pinned at offset 200: %x", out[200:212])
 	f2, _ := DecodeBytes(out)
 	e, ok := findEntry(f2.Root, 0x927C)
-	r.True(ok && bytes.Equal(e.Raw, maker), "MakerNote not round-tripped: %x", e.Raw)
+	assert.True(t, ok && bytes.Equal(e.Raw, maker), "MakerNote not round-tripped: %x", e.Raw)
 }
 
 func TestEncodePinDroppedOnConflict(t *testing.T) {
-	r := require.New(t)
 	order := binary.LittleEndian
 	maker := bytes.Repeat([]byte{0xAB}, 12)
 	f := &File{
@@ -161,13 +153,13 @@ func TestEncodePinDroppedOnConflict(t *testing.T) {
 		},
 	}
 	out, warns, err := f.Encode()
-	r.NoError(err)
-	r.Len(warns, 1, "want one WarnDroppedOnRelocate for 0x927C, got %v", warns)
-	r.Equal(WarnDroppedOnRelocate, warns[0].Kind)
-	r.EqualValues(0x927C, warns[0].Tag)
+	require.NoError(t, err)
+	require.Len(t, warns, 1, "want one WarnDroppedOnRelocate for 0x927C, got %v", warns)
+	assert.Equal(t, WarnDroppedOnRelocate, warns[0].Kind)
+	assert.EqualValues(t, 0x927C, warns[0].Tag)
 	f2, _ := DecodeBytes(out)
 	_, ok := findEntry(f2.Root, 0x927C)
-	r.False(ok, "dropped MakerNote should be absent from output")
+	assert.False(t, ok, "dropped MakerNote should be absent from output")
 }
 
 // --- image data --------------------------------------------------------------
@@ -204,24 +196,23 @@ func buildStripTIFF(order binary.ByteOrder) ([]byte, []byte) {
 func TestEncodeImageDataRelocation(t *testing.T) {
 	for _, order := range []binary.ByteOrder{binary.LittleEndian, binary.BigEndian} {
 		t.Run(orderName(order), func(t *testing.T) {
-			r := require.New(t)
 			blob, pixels := buildStripTIFF(order)
 			f, err := DecodeBytes(blob, WithImageData())
-			r.NoError(err)
-			r.Empty(f.Errs, "decode faults")
+			require.NoError(t, err)
+			require.Empty(t, f.Errs, "decode faults")
 			so, ok := findEntry(f.Root, 273)
-			r.True(ok, "StripOffsets missing")
-			r.Len(so.imgData, 1, "strip data not dereferenced: %v", so.imgData)
-			r.True(bytes.Equal(so.imgData[0], pixels), "strip data not dereferenced: %v", so.imgData)
+			require.True(t, ok, "StripOffsets missing")
+			require.Len(t, so.imgData, 1, "strip data not dereferenced: %v", so.imgData)
+			assert.True(t, bytes.Equal(so.imgData[0], pixels), "strip data not dereferenced: %v", so.imgData)
 
 			out, _, err := f.Encode()
-			r.NoError(err)
+			require.NoError(t, err)
 			f2, err := DecodeBytes(out, WithImageData())
-			r.NoError(err)
+			require.NoError(t, err)
 			so2, ok := findEntry(f2.Root, 273)
-			r.True(ok, "StripOffsets missing after re-encode")
-			r.Len(so2.imgData, 1, "pixels lost on re-encode: %v", so2.imgData)
-			r.True(bytes.Equal(so2.imgData[0], pixels), "pixels lost on re-encode: %v", so2.imgData)
+			require.True(t, ok, "StripOffsets missing after re-encode")
+			require.Len(t, so2.imgData, 1, "pixels lost on re-encode: %v", so2.imgData)
+			assert.True(t, bytes.Equal(so2.imgData[0], pixels), "pixels lost on re-encode: %v", so2.imgData)
 		})
 	}
 }
@@ -229,19 +220,17 @@ func TestEncodeImageDataRelocation(t *testing.T) {
 // --- SHORT offset overflow -----------------------------------------------------
 
 func TestPlaceImageDataUpgradesShortOffsetOnOverflow(t *testing.T) {
-	r := require.New(t)
 	e := &encoder{order: binary.LittleEndian, alloc: newAllocator(), plans: map[*IFD]*ifdPlan{}}
 	e.alloc.reserve(8, 0x10000-8) // fill everything up to 0x10000
 
 	en := &Entry{Tag: 273, Type: TypeShort, Count: 1, imgData: [][]byte{[]byte("PIXELS!!")}}
 	raw, typ := e.placeImageData(en)
-	r.Equal(TypeLong, typ)
-	r.Len(raw, 4, "raw len, want 4 (one LONG offset)")
-	r.GreaterOrEqual(binary.LittleEndian.Uint32(raw), uint32(0x10000))
+	assert.Equal(t, TypeLong, typ)
+	require.Len(t, raw, 4, "raw len, want 4 (one LONG offset)")
+	assert.GreaterOrEqual(t, binary.LittleEndian.Uint32(raw), uint32(0x10000))
 }
 
 func TestEncodeStripOffsetUpgradesToLongOnOverflow(t *testing.T) {
-	r := require.New(t)
 	order := binary.LittleEndian
 	pixels := []byte("PIXELS!!")
 	byteCount := make([]byte, 4)
@@ -260,14 +249,14 @@ func TestEncodeStripOffsetUpgradesToLongOnOverflow(t *testing.T) {
 		},
 	}
 	out, _, err := f.Encode()
-	r.NoError(err)
+	require.NoError(t, err)
 	f2, err := DecodeBytes(out, WithImageData())
-	r.NoError(err)
+	require.NoError(t, err)
 	so, ok := findEntry(f2.Root, 273)
-	r.True(ok, "StripOffsets missing after round-trip")
-	r.Equal(TypeLong, so.Type)
-	r.Len(so.imgData, 1)
-	r.True(bytes.Equal(so.imgData[0], pixels), "pixel data lost/corrupted: %v", so.imgData)
+	require.True(t, ok, "StripOffsets missing after round-trip")
+	assert.Equal(t, TypeLong, so.Type)
+	require.Len(t, so.imgData, 1)
+	assert.True(t, bytes.Equal(so.imgData[0], pixels), "pixel data lost/corrupted: %v", so.imgData)
 }
 
 // --- structural gate ---------------------------------------------------------

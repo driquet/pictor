@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -157,7 +158,6 @@ func orderName(o binary.ByteOrder) string {
 func TestDecodeRoundTrip(t *testing.T) {
 	for _, order := range []binary.ByteOrder{binary.LittleEndian, binary.BigEndian} {
 		t.Run(orderName(order), func(t *testing.T) {
-			r := require.New(t)
 			ifd0 := []entry{
 				{0x010F, TypeASCII, 6, ascii("Canon")},  // Make, out-of-line (6 > 4)
 				{0x0112, TypeShort, 1, short(order, 6)}, // Orientation, inline
@@ -172,36 +172,36 @@ func TestDecodeRoundTrip(t *testing.T) {
 			blob := buildTIFF(order, ifd0, exifSub, gps)
 
 			f, err := DecodeBytes(blob, exifOpts()...)
-			r.NoError(err)
-			r.Empty(f.Errs, "unexpected faults")
-			r.Equal(order, f.Order)
+			require.NoError(t, err)
+			require.Empty(t, f.Errs, "unexpected faults")
+			assert.Equal(t, order, f.Order)
 
 			// Sub-IFD pointer entries lifted OUT of Entries.
 			_, ok := findEntry(f.Root, tagExifSubIFD)
-			r.False(ok, "Exif pointer entry should be lifted out of Entries")
-			r.Len(f.Root.Entries, 2, "IFD0 Entries")
+			assert.False(t, ok, "Exif pointer entry should be lifted out of Entries")
+			assert.Len(t, f.Root.Entries, 2, "IFD0 Entries")
 
 			// Out-of-line ASCII value captured verbatim.
 			e, ok := findEntry(f.Root, 0x010F)
-			r.True(ok, "Make missing")
-			r.Equal("Canon\x00", string(e.Raw))
+			require.True(t, ok, "Make missing")
+			assert.Equal(t, "Canon\x00", string(e.Raw))
 
 			// Inline SHORT value.
 			e, ok = findEntry(f.Root, 0x0112)
-			r.True(ok, "Orientation missing")
-			r.EqualValues(6, order.Uint16(e.Raw))
+			require.True(t, ok, "Orientation missing")
+			assert.EqualValues(t, 6, order.Uint16(e.Raw))
 
 			// Exif sub-IFD present with its tags.
 			exif := f.Root.Subs[tagExifSubIFD]
-			r.NotNil(exif, "Exif sub-IFD missing")
+			require.NotNil(t, exif, "Exif sub-IFD missing")
 			e, ok = findEntry(exif, 0x829A)
-			r.True(ok, "ExposureTime missing")
+			require.True(t, ok, "ExposureTime missing")
 			num, den := order.Uint32(e.Raw[0:]), order.Uint32(e.Raw[4:])
-			r.EqualValues(1, num, "ExposureTime numerator")
-			r.EqualValues(200, den, "ExposureTime denominator")
+			assert.EqualValues(t, 1, num, "ExposureTime numerator")
+			assert.EqualValues(t, 200, den, "ExposureTime denominator")
 
 			// GPS sub-IFD present.
-			r.NotNil(f.Root.Subs[tagGPSIFD], "GPS sub-IFD missing")
+			assert.NotNil(t, f.Root.Subs[tagGPSIFD], "GPS sub-IFD missing")
 		})
 	}
 }
@@ -209,16 +209,15 @@ func TestDecodeRoundTrip(t *testing.T) {
 func TestDecodeUndeclaredPointerStaysData(t *testing.T) {
 	// Without WithSubIFDTags, the Exif pointer is just an ordinary LONG entry;
 	// tiff has no EXIF knowledge of its own.
-	r := require.New(t)
 	order := binary.LittleEndian
 	blob := buildTIFF(order, []entry{{0x0112, TypeShort, 1, short(order, 1)}},
 		[]entry{{0x8827, TypeShort, 1, short(order, 100)}}, nil)
 
 	f, err := DecodeBytes(blob) // no options
-	r.NoError(err)
-	r.Nil(f.Root.Subs[tagExifSubIFD], "Exif recursed without being declared")
+	require.NoError(t, err)
+	assert.Nil(t, f.Root.Subs[tagExifSubIFD], "Exif recursed without being declared")
 	_, ok := findEntry(f.Root, tagExifSubIFD)
-	r.True(ok, "undeclared pointer should remain a data entry")
+	assert.True(t, ok, "undeclared pointer should remain a data entry")
 }
 
 func TestDecodeBigTIFFRejected(t *testing.T) {
@@ -228,7 +227,6 @@ func TestDecodeBigTIFFRejected(t *testing.T) {
 }
 
 func TestDecodeBadHeader(t *testing.T) {
-	r := require.New(t)
 	for _, tc := range [][]byte{
 		{},                                 // empty
 		{'X', 'Y', 0x2A, 0x00, 8, 0, 0, 0}, // bad byte-order mark
@@ -236,12 +234,11 @@ func TestDecodeBadHeader(t *testing.T) {
 		{'I', 'I', 0x2A},                   // too short
 	} {
 		_, err := DecodeBytes(tc)
-		r.Error(err, "expected header error for %v", tc)
+		require.Error(t, err, "expected header error for %v", tc)
 	}
 }
 
 func TestDecodeTruncatedIsBestEffort(t *testing.T) {
-	r := require.New(t)
 	order := binary.LittleEndian
 	blob := buildTIFF(order, []entry{
 		{0x010F, TypeASCII, 6, ascii("Canon")}, // out-of-line value in the pool
@@ -250,20 +247,19 @@ func TestDecodeTruncatedIsBestEffort(t *testing.T) {
 	cut := blob[:len(blob)-3] // chop the tail of the value pool
 
 	f, err := DecodeBytes(cut)
-	r.NoError(err, "truncation must not be fatal")
-	r.NotNil(f.Root, "valid header must still yield a tree")
+	require.NoError(t, err, "truncation must not be fatal")
+	require.NotNil(t, f.Root, "valid header must still yield a tree")
 	var structural bool
 	for _, e := range f.Errs {
 		if e.Structural() {
 			structural = true
 		}
 	}
-	r.True(structural, "expected a structural fault for the out-of-range value")
+	assert.True(t, structural, "expected a structural fault for the out-of-range value")
 }
 
 func TestDecodeCycleGuarded(t *testing.T) {
 	// IFD0 whose next-IFD points back at itself (offset 8).
-	r := require.New(t)
 	order := binary.LittleEndian
 	buf := make([]byte, 8+dirSize(1))
 	buf[0], buf[1] = 'I', 'I'
@@ -277,28 +273,27 @@ func TestDecodeCycleGuarded(t *testing.T) {
 	order.PutUint32(buf[8+2+12:], 8) // next-IFD -> 8 (self)
 
 	f, err := DecodeBytes(buf)
-	r.NoError(err)
+	require.NoError(t, err)
 	var cycle bool
 	for _, e := range f.Errs {
 		if e.Code == ErrCycle {
 			cycle = true
 		}
 	}
-	r.True(cycle, "expected ErrCycle")
+	assert.True(t, cycle, "expected ErrCycle")
 }
 
 func TestDecodeByteOffsetBase(t *testing.T) {
-	r := require.New(t)
 	order := binary.LittleEndian
 	blob := buildTIFF(order, []entry{{0x0112, TypeShort, 1, short(order, 3)}}, nil, nil)
 	prefix := []byte("Exif\x00\x00")
 	shifted := append(append([]byte{}, prefix...), blob...)
 
 	f, err := DecodeBytes(shifted, WithByteOffsetBase(int64(len(prefix))))
-	r.NoError(err)
+	require.NoError(t, err)
 	e, ok := findEntry(f.Root, 0x0112)
-	r.True(ok, "Orientation not parsed through offset base")
-	r.EqualValues(3, order.Uint16(e.Raw))
+	require.True(t, ok, "Orientation not parsed through offset base")
+	assert.EqualValues(t, 3, order.Uint16(e.Raw))
 }
 
 func FuzzDecodeBytes(f *testing.F) {

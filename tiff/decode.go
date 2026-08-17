@@ -36,7 +36,9 @@ func tagSet(dst *map[uint16]bool, ids []uint16) {
 // TIFF header within the buffer. 0 (default) = standalone TIFF, offsets count
 // from byte 0. Use nonzero when the buffer carries bytes before the header.
 func WithByteOffsetBase(base int64) Option {
-	return func(c *config) { c.base = base }
+	return func(c *config) {
+		c.base = base
+	}
 }
 
 // WithSubIFDTags declares which tag ids hold pointers to child IFDs, so the
@@ -45,14 +47,18 @@ func WithByteOffsetBase(base int64) Option {
 // every IFD level; ids are matched wherever they appear. The TIFF-native SubIFDs
 // tag (330) is always handled.
 func WithSubIFDTags(tagIDs ...uint16) Option {
-	return func(c *config) { tagSet(&c.subIFDTags, tagIDs) }
+	return func(c *config) {
+		tagSet(&c.subIFDTags, tagIDs)
+	}
 }
 
 // WithOpaqueTags marks the given tag ids Opaque: their value bytes must not be
 // interpreted (MakerNote 0x927C, ICC, XMP). Encode still copies them verbatim;
 // the flag is for higher layers that would otherwise decode the bytes.
 func WithOpaqueTags(tagIDs ...uint16) Option {
-	return func(c *config) { tagSet(&c.opaqueTags, tagIDs) }
+	return func(c *config) {
+		tagSet(&c.opaqueTags, tagIDs)
+	}
 }
 
 // WithImmovableTags marks the given tag ids Pinned: Encode keeps their
@@ -60,7 +66,9 @@ func WithOpaqueTags(tagIDs ...uint16) Option {
 // an unknown vendor base, so the blob can't be relocated. If the offset can't be
 // honoured the value is dropped with a WarnDroppedOnRelocate warning.
 func WithImmovableTags(tagIDs ...uint16) Option {
-	return func(c *config) { tagSet(&c.immovableTag, tagIDs) }
+	return func(c *config) {
+		tagSet(&c.immovableTag, tagIDs)
+	}
 }
 
 // WithImageData dereferences the TIFF-native pixel/tile/thumbnail offset arrays
@@ -69,7 +77,9 @@ func WithImmovableTags(tagIDs ...uint16) Option {
 // self-contained file from the tree alone. Off by default: read-only callers
 // never touch pixels. Only standalone TIFF carries strips; a no-op otherwise.
 func WithImageData() Option {
-	return func(c *config) { c.imageData = true }
+	return func(c *config) {
+		c.imageData = true
+	}
 }
 
 // Decode reads size bytes from r (byte 0 of the addressed range = the buffer the
@@ -314,7 +324,7 @@ type imagePair struct{ off, cnt uint16 }
 
 // imagePairs are the three second-level indirections a read-only decode skips:
 // strips, tiles, and the embedded JPEG thumbnail (single-element arrays for the
-// thumbnail). Dead old-JPEG table tags (0x0203–0x0205) are ignored.
+// thumbnail). Dead old-JPEG table tags (0x0203-0x0205) are ignored.
 var imagePairs = []imagePair{
 	{273, 279},       // StripOffsets / StripByteCounts
 	{324, 325},       // TileOffsets / TileByteCounts
