@@ -51,15 +51,43 @@ func ReadTIFFBytes(b []byte) (*Metadata, []error) {
 	return fromFile(f)
 }
 
-// fromFile runs the two read stages over an already-parsed tiff.File, carrying
-// the parse faults through.
-func fromFile(f *tiff.File) (*Metadata, []error) {
+// ReadTags parses a standalone TIFF/EXIF blob and returns every recognized
+// tag, flat and grouped (Extract's output), without folding into Metadata.
+// Same decode path as ReadTIFF - useful for a generic "every tag" debug view
+// that Metadata's curated fields don't cover.
+func ReadTags(r io.ReaderAt, size int64) ([]Tag, []error) {
+	f, err := tiff.Decode(r, size, subIFDOpt())
+	if err != nil {
+		return nil, []error{err}
+	}
+	return extractTags(f)
+}
+
+// ReadTagsBytes is the in-memory variant of ReadTags.
+func ReadTagsBytes(b []byte) ([]Tag, []error) {
+	f, err := tiff.DecodeBytes(b, subIFDOpt())
+	if err != nil {
+		return nil, []error{err}
+	}
+	return extractTags(f)
+}
+
+// extractTags runs Extract over an already-parsed tiff.File, carrying the
+// parse faults through.
+func extractTags(f *tiff.File) ([]Tag, []error) {
 	var errs []error
-	for _, e := range f.Errs { // tiff.Error implements error
+	for _, e := range f.Errs {
 		errs = append(errs, e)
 	}
 	tags, exErrs := Extract(f)
 	errs = append(errs, exErrs...)
+	return tags, errs
+}
+
+// fromFile runs the two read stages over an already-parsed tiff.File, carrying
+// the parse faults through.
+func fromFile(f *tiff.File) (*Metadata, []error) {
+	tags, errs := extractTags(f)
 	m, mErrs := FromTags(tags)
 	errs = append(errs, mErrs...)
 	return m, errs
