@@ -166,8 +166,8 @@ func TestReadTIFFGolden(t *testing.T) {
 			}
 			blob := buildTIFF(o, ifd0, exifSub, gps)
 
-			m, errs := ReadTIFFBytes(blob)
-			require.Empty(t, errs, "unexpected faults")
+			doc := readOK(t, blob)
+			m := doc.Metadata()
 
 			assert.Equal(t, "Canon", m.Make)
 			assert.Equal(t, "EOSR5", m.Model)
@@ -214,8 +214,7 @@ func TestReadTIFFGolden(t *testing.T) {
 
 func TestReadTIFFEmptyIsClean(t *testing.T) {
 	blob := buildTIFF(binary.LittleEndian, []entry{{tagOrientation, tiff.TypeShort, 1, short(binary.LittleEndian, 1)}}, nil, nil)
-	m, errs := ReadTIFFBytes(blob)
-	require.Empty(t, errs, "faults")
+	m := readOK(t, blob).Metadata()
 	assert.Empty(t, m.Make, "absent tags should stay zero/nil without error")
 	assert.Nil(t, m.GPS)
 	assert.Nil(t, m.ISO)
@@ -229,10 +228,10 @@ func TestExtractSkipsUnknownAndMalformed(t *testing.T) {
 	}, nil, nil)
 
 	f, _ := tiff.DecodeBytes(blob, subIFDOpt())
-	tags, errs := Extract(f)
+	tags, errs := extract(f)
 	for _, tg := range tags {
 		assert.NotEqual(t, uint16(0x9999), tg.ID, "unknown tag should not be extracted")
-		assert.NotEqual(t, "Orientation", tg.Name, "malformed orientation should not be extracted")
+		assert.NotEqual(t, TagOrientation, tg.Name, "malformed orientation should not be extracted")
 	}
 	require.Len(t, errs, 1, "want 1 fault (bad orientation)")
 	e, ok := errs[0].(Error)
@@ -249,14 +248,32 @@ func TestGPSLonePairFaults(t *testing.T) {
 	}
 	blob := buildTIFF(o, []entry{{tagMake, tiff.TypeASCII, 3, ascii("X")}}, nil, gps)
 
-	m, errs := ReadTIFFBytes(blob)
+	doc, err := ReadBytes(blob)
+	require.NoError(t, err)
+	m := doc.Metadata()
 	assert.Nil(t, m.GPS, "lone latitude must not yield GPS")
 
 	var found bool
-	for _, e := range errs {
+	for _, e := range doc.Errs() {
 		if ex, ok := e.(Error); ok && ex.Tag == tagGPSLatitude {
 			found = true
 		}
 	}
-	assert.True(t, found, "expected a lone-coordinate fault, got %v", errs)
+	assert.True(t, found, "expected a lone-coordinate fault, got %v", doc.Errs())
+}
+
+func TestErrsRecomputedAfterMutation(t *testing.T) {
+	o := binary.LittleEndian
+	gps := []entry{
+		{tagGPSLatitudeRef, tiff.TypeASCII, 2, ascii("N")},
+		{tagGPSLatitude, tiff.TypeRational, 3, rats(o, 48, 1, 0, 1, 0, 1)},
+	}
+	blob := buildTIFF(o, nil, nil, gps)
+
+	doc, err := ReadBytes(blob)
+	require.NoError(t, err)
+	require.NotEmpty(t, doc.Errs(), "lone coordinate should fault")
+
+	require.NoError(t, doc.RemoveTag(TagGPSLatitude))
+	assert.Empty(t, doc.Errs(), "fault should clear once the lone tag is gone")
 }

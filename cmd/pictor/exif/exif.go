@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/driquet/pictor/exif"
 	"github.com/driquet/pictor/internal/fsutil"
+	"github.com/driquet/pictor/tiff"
 	"github.com/spf13/cobra"
 )
 
@@ -76,8 +79,8 @@ func runRead(cmd *cobra.Command, args []string) error {
 
 var errReadFailed = errors.New("one or more files failed to read")
 
-// readFile decodes one file and prints its tags. Parse/extract faults are
-// best-effort: they're reported as warnings, not a hard failure.
+// readFile decodes one file and prints its tags. Best-effort faults land in
+// doc.Errs(); they're reported as warnings, not a hard failure.
 func readFile(out, errOut io.Writer, path string) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -90,16 +93,20 @@ func readFile(out, errOut io.Writer, path string) error {
 		return err
 	}
 
-	tags, errs := exif.ReadTags(f, info.Size())
-	printTags(out, tags)
-	for _, e := range errs {
+	doc, err := exif.Read(f, info.Size())
+	if err != nil {
+		return err
+	}
+
+	printTags(out, doc.Tags())
+	for _, e := range doc.Errs() {
 		fmt.Fprintf(errOut, "warning: %s: %v\n", path, e)
 	}
 	return nil
 }
 
 // printTags renders the tag list grouped by IFD (IFD0, Exif, GPS), the order
-// ReadTags/Extract already sort them in.
+// Document.Tags() already sorts them in.
 func printTags(w io.Writer, tags []exif.Tag) {
 	if len(tags) == 0 {
 		fmt.Fprintln(w, "no EXIF metadata")
@@ -116,7 +123,36 @@ func printTags(w io.Writer, tags []exif.Tag) {
 			fmt.Fprintf(tw, "[%s]\n", t.Group)
 			group, started = t.Group, true
 		}
-		fmt.Fprintf(tw, "  %s:\t%s\n", t.Name, t.Format())
+		fmt.Fprintf(tw, "  %s:\t%s\n", t.Name, formatTag(t))
 	}
 	tw.Flush()
+}
+
+// formatTag renders a Tag's already-typed Value as display text. Value's
+// dynamic type is whatever exif.Tag's doc comment documents: string,
+// uint8/16/32, exif.Orientation, tiff.Rational, or []tiff.Rational (an
+// undivided GPS deg/min/sec triplet).
+func formatTag(t exif.Tag) string {
+	switch v := t.Value.(type) {
+	case string:
+		return v
+	case exif.Orientation:
+		return v.String()
+	case uint8:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint16:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint32:
+		return strconv.FormatUint(uint64(v), 10)
+	case tiff.Rational:
+		return strconv.FormatFloat(v.Float64(), 'g', -1, 64)
+	case []tiff.Rational:
+		parts := make([]string, len(v))
+		for i, r := range v {
+			parts[i] = strconv.FormatFloat(r.Float64(), 'g', -1, 64)
+		}
+		return strings.Join(parts, ", ")
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }

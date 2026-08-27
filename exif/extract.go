@@ -35,20 +35,44 @@ func (g Group) String() string {
 // Tag is a recognized EXIF tag with its value converted from raw bytes to a
 // semantic Go value. Value's dynamic type is fixed per tag by the tag table:
 // string, uint16, uint32, tiff.Rational, []tiff.Rational, or uint8. Cross-tag
-// assembly (GPS triplet+ref, datetime+offset) happens later, in FromTags.
+// assembly (GPS triplet+ref, datetime+offset) happens later, in fromTags.
 type Tag struct {
 	ID    uint16
-	Name  string
+	Name  TagName
 	Group Group
 	Value any
 }
+
+// TagName identifies a modeled, settable EXIF tag by name.
+type TagName string
+
+// The full settable/strippable tag vocabulary.
+const (
+	TagMake               TagName = "Make"
+	TagModel              TagName = "Model"
+	TagSoftware           TagName = "Software"
+	TagOrientation        TagName = "Orientation"
+	TagDateTime           TagName = "DateTime"
+	TagDateTimeOriginal   TagName = "DateTimeOriginal"
+	TagOffsetTimeOriginal TagName = "OffsetTimeOriginal"
+	TagExposureTime       TagName = "ExposureTime"
+	TagFNumber            TagName = "FNumber"
+	TagISO                TagName = "ISO"
+	TagFocalLength        TagName = "FocalLength"
+	TagPixelXDimension    TagName = "PixelXDimension"
+	TagPixelYDimension    TagName = "PixelYDimension"
+	TagLensModel          TagName = "LensModel"
+	TagGPSLatitude        TagName = "GPSLatitude"
+	TagGPSLongitude       TagName = "GPSLongitude"
+	TagGPSAltitude        TagName = "GPSAltitude"
+)
 
 // valueConv turns one entry's raw bytes into its semantic value, or errors if
 // the entry has the wrong type/shape. It never sees cross-tag context.
 type valueConv func(o binary.ByteOrder, e tiff.Entry) (any, error)
 
 type tagDef struct {
-	name string
+	name TagName
 	conv valueConv
 }
 
@@ -80,39 +104,47 @@ const (
 )
 
 // Per-group tag tables. Keyed by id within the group the extractor is walking.
+// GPS ref tags (LatitudeRef/LongitudeRef) aren't independently settable (they
+// travel with their coordinate via SetTag), so they have no TagName constant.
+const (
+	tagNameGPSLatitudeRef  TagName = "GPSLatitudeRef"
+	tagNameGPSLongitudeRef TagName = "GPSLongitudeRef"
+	tagNameGPSAltitudeRef  TagName = "GPSAltitudeRef"
+)
+
 var (
 	ifd0Table = map[uint16]tagDef{
-		tagMake:        {"Make", convASCII},
-		tagModel:       {"Model", convASCII},
-		tagSoftware:    {"Software", convASCII},
-		tagOrientation: {"Orientation", convOrientation},
-		tagDateTime:    {"DateTime", convASCII},
+		tagMake:        {TagMake, convASCII},
+		tagModel:       {TagModel, convASCII},
+		tagSoftware:    {TagSoftware, convASCII},
+		tagOrientation: {TagOrientation, convOrientation},
+		tagDateTime:    {TagDateTime, convASCII},
 	}
 	exifTable = map[uint16]tagDef{
-		tagDateTimeOriginal:   {"DateTimeOriginal", convASCII},
-		tagOffsetTimeOriginal: {"OffsetTimeOriginal", convASCII},
-		tagExposureTime:       {"ExposureTime", convRational},
-		tagFNumber:            {"FNumber", convRational},
-		tagISO:                {"ISO", convShort},
-		tagFocalLength:        {"FocalLength", convRational},
-		tagPixelXDimension:    {"PixelXDimension", convDimension},
-		tagPixelYDimension:    {"PixelYDimension", convDimension},
-		tagLensModel:          {"LensModel", convASCII},
+		tagDateTimeOriginal:   {TagDateTimeOriginal, convASCII},
+		tagOffsetTimeOriginal: {TagOffsetTimeOriginal, convASCII},
+		tagExposureTime:       {TagExposureTime, convRational},
+		tagFNumber:            {TagFNumber, convRational},
+		tagISO:                {TagISO, convShort},
+		tagFocalLength:        {TagFocalLength, convRational},
+		tagPixelXDimension:    {TagPixelXDimension, convDimension},
+		tagPixelYDimension:    {TagPixelYDimension, convDimension},
+		tagLensModel:          {TagLensModel, convASCII},
 	}
 	gpsTable = map[uint16]tagDef{
-		tagGPSLatitudeRef:  {"GPSLatitudeRef", convASCII},
-		tagGPSLatitude:     {"GPSLatitude", convRationalTriplet},
-		tagGPSLongitudeRef: {"GPSLongitudeRef", convASCII},
-		tagGPSLongitude:    {"GPSLongitude", convRationalTriplet},
-		tagGPSAltitudeRef:  {"GPSAltitudeRef", convByte},
-		tagGPSAltitude:     {"GPSAltitude", convRational},
+		tagGPSLatitudeRef:  {tagNameGPSLatitudeRef, convASCII},
+		tagGPSLatitude:     {TagGPSLatitude, convRationalTriplet},
+		tagGPSLongitudeRef: {tagNameGPSLongitudeRef, convASCII},
+		tagGPSLongitude:    {TagGPSLongitude, convRationalTriplet},
+		tagGPSAltitudeRef:  {tagNameGPSAltitudeRef, convByte},
+		tagGPSAltitude:     {TagGPSAltitude, convRational},
 	}
 )
 
-// Extract walks the parsed IFD tree and returns the recognized tags with their
+// extract walks the parsed IFD tree and returns the recognized tags with their
 // values converted. Unrecognized tags are ignored; malformed recognized tags are
 // skipped with a fault appended. Deterministic order (by group, then id).
-func Extract(f *tiff.File) ([]Tag, []error) {
+func extract(f *tiff.File) ([]Tag, []error) {
 	if f == nil || f.Root == nil {
 		return nil, nil
 	}

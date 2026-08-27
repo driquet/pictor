@@ -49,7 +49,7 @@ func (o Orientation) String() string {
 }
 
 // Metadata is the flat typed view. Pointer/empty-string fields mean
-// absent-or-unparseable; the []error from FromTags names which faults fired.
+// absent-or-unparseable; Document.Errs() names which faults fired.
 type Metadata struct {
 	Make, Model, Software string
 	Orientation           *Orientation
@@ -74,40 +74,40 @@ type GPSInfo struct {
 	Altitude            *float64
 }
 
-// FromTags folds the extracted tags into a Metadata. Never fails wholesale:
+// fromTags folds the extracted tags into a Metadata. Never fails wholesale:
 // absent tags leave fields nil with no error; a malformed cross-tag combination
 // (e.g. a lone GPS coordinate, an unparseable datetime) leaves the field nil and
 // appends a fault.
-func FromTags(tags []Tag) (*Metadata, []error) {
+func fromTags(tags []Tag) (*Metadata, []error) {
 	m := &Metadata{}
 	x := index(tags)
 	var errs []error
 
-	m.Make = x.str("Make")
-	m.Model = x.str("Model")
-	m.Software = x.str("Software")
-	m.LensModel = x.str("LensModel")
+	m.Make = x.str(TagMake)
+	m.Model = x.str(TagModel)
+	m.Software = x.str(TagSoftware)
+	m.LensModel = x.str(TagLensModel)
 
-	if o, ok := x.get("Orientation").(Orientation); ok {
+	if o, ok := x.get(TagOrientation).(Orientation); ok {
 		m.Orientation = &o
 	}
-	if r, ok := x.get("ExposureTime").(tiff.Rational); ok {
+	if r, ok := x.get(TagExposureTime).(tiff.Rational); ok {
 		m.ExposureTime = &r
 	}
-	m.FNumber = x.ratFloat("FNumber")
-	m.FocalLength = x.ratFloat("FocalLength")
-	if v, ok := x.get("ISO").(uint16); ok {
+	m.FNumber = x.ratFloat(TagFNumber)
+	m.FocalLength = x.ratFloat(TagFocalLength)
+	if v, ok := x.get(TagISO).(uint16); ok {
 		m.ISO = &v
 	}
-	if v, ok := x.get("PixelXDimension").(uint32); ok {
+	if v, ok := x.get(TagPixelXDimension).(uint32); ok {
 		m.PixelXDimension = &v
 	}
-	if v, ok := x.get("PixelYDimension").(uint32); ok {
+	if v, ok := x.get(TagPixelYDimension).(uint32); ok {
 		m.PixelYDimension = &v
 	}
 
-	m.DateTime = parseDateTime(x.str("DateTime"), "", tagDateTime, &errs)
-	m.DateTimeOriginal = parseDateTime(x.str("DateTimeOriginal"), x.str("OffsetTimeOriginal"), tagDateTimeOriginal, &errs)
+	m.DateTime = parseDateTime(x.str(TagDateTime), "", tagDateTime, &errs)
+	m.DateTimeOriginal = parseDateTime(x.str(TagDateTimeOriginal), x.str(TagOffsetTimeOriginal), tagDateTimeOriginal, &errs)
 
 	m.GPS = buildGPS(x, &errs)
 	sortErrors(errs)
@@ -116,7 +116,7 @@ func FromTags(tags []Tag) (*Metadata, []error) {
 
 // --- tag index ---------------------------------------------------------------
 
-type tagIndex map[string]any
+type tagIndex map[TagName]any
 
 func index(tags []Tag) tagIndex {
 	x := make(tagIndex, len(tags))
@@ -126,14 +126,14 @@ func index(tags []Tag) tagIndex {
 	return x
 }
 
-func (x tagIndex) get(name string) any { return x[name] }
+func (x tagIndex) get(name TagName) any { return x[name] }
 
-func (x tagIndex) str(name string) string {
+func (x tagIndex) str(name TagName) string {
 	s, _ := x[name].(string)
 	return s
 }
 
-func (x tagIndex) ratFloat(name string) *float64 {
+func (x tagIndex) ratFloat(name TagName) *float64 {
 	if r, ok := x[name].(tiff.Rational); ok {
 		f := r.Float64()
 		return &f
@@ -165,8 +165,8 @@ func buildGPS(x tagIndex, errs *[]error) *GPSInfo {
 
 	// Latitude and longitude are only meaningful as a pair: a lone coordinate
 	// would leave the other at 0 (Null Island), so require both.
-	lat, latOK := gpsCoord(x, "GPSLatitude", "GPSLatitudeRef", "S")
-	lon, lonOK := gpsCoord(x, "GPSLongitude", "GPSLongitudeRef", "W")
+	lat, latOK := gpsCoord(x, TagGPSLatitude, tagNameGPSLatitudeRef, "S")
+	lon, lonOK := gpsCoord(x, TagGPSLongitude, tagNameGPSLongitudeRef, "W")
 	switch {
 	case latOK && lonOK:
 		g.Latitude, g.Longitude = lat, lon
@@ -175,9 +175,9 @@ func buildGPS(x tagIndex, errs *[]error) *GPSInfo {
 		*errs = append(*errs, newErr(tiff.ErrBadValue, tagGPSLatitude, "GPS has only one of latitude/longitude"))
 	}
 
-	if r, ok := x.get("GPSAltitude").(tiff.Rational); ok {
+	if r, ok := x.get(TagGPSAltitude).(tiff.Rational); ok {
 		alt := r.Float64()
-		if ref, ok := x.get("GPSAltitudeRef").(byte); ok && ref == 1 {
+		if ref, ok := x.get(tagNameGPSAltitudeRef).(byte); ok && ref == 1 {
 			alt = -alt // below sea level
 		}
 		g.Altitude = &alt
@@ -191,7 +191,7 @@ func buildGPS(x tagIndex, errs *[]error) *GPSInfo {
 
 // gpsCoord combines a deg/min/sec triplet with its N/S or E/W ref into signed
 // decimal degrees.
-func gpsCoord(x tagIndex, coord, ref, neg string) (float64, bool) {
+func gpsCoord(x tagIndex, coord, ref TagName, neg string) (float64, bool) {
 	t, ok := x.get(coord).([]tiff.Rational)
 	if !ok || len(t) < 3 {
 		return 0, false
