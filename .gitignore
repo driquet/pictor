@@ -17,6 +17,9 @@ coverage.txt
 # Go workspace / vendor
 vendor/
 
+# scripts/setup-corpus.sh default target (see exif/corpus_test.go)
+/.corpus/
+
 # Editors / OS
 .vscode/
 .idea/
