@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/driquet/pictor/exif"
 	"github.com/driquet/pictor/internal/fsutil"
@@ -98,32 +99,108 @@ func readFile(out, errOut io.Writer, path string) error {
 		return err
 	}
 
-	printTags(out, doc.Tags())
+	printSections(out, buildSections(path, info, doc.Tags(), doc.Metadata().GPS))
 	for _, e := range doc.Errs() {
 		fmt.Fprintf(errOut, "warning: %s: %v\n", path, e)
 	}
 	return nil
 }
 
-// printTags renders the tag list grouped by IFD (IFD0, Exif, GPS), the order
-// Document.Tags() already sorts them in.
-func printTags(w io.Writer, tags []exif.Tag) {
-	if len(tags) == 0 {
-		fmt.Fprintln(w, "no EXIF metadata")
-		return
-	}
+// row is one key/value line within a section.
+type row struct{ key, val string }
 
-	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	group, started := exif.Group(0), false
+// section is a named group of rows, e.g. "File" or "Camera".
+type section struct {
+	name string
+	rows []row
+}
+
+// tagSection buckets EXIF tags into presentation sections that don't mirror
+// the underlying TIFF/IFD structure (exif.Group). GPS tags aren't listed
+// here; they're matched by Group instead (see buildSections) since some of
+// them (the *Ref tags) have no exported exif.TagName constant to key on.
+var tagSection = map[exif.TagName]string{
+	exif.TagMake:      "Camera",
+	exif.TagModel:     "Camera",
+	exif.TagLensModel: "Camera",
+
+	exif.TagOrientation:     "Image",
+	exif.TagPixelXDimension: "Image",
+	exif.TagPixelYDimension: "Image",
+
+	exif.TagDateTime:           "Capture",
+	exif.TagDateTimeOriginal:   "Capture",
+	exif.TagOffsetTimeOriginal: "Capture",
+	exif.TagExposureTime:       "Capture",
+	exif.TagFNumber:            "Capture",
+	exif.TagISO:                "Capture",
+	exif.TagFocalLength:        "Capture",
+	exif.TagSoftware:           "Capture",
+}
+
+// sectionOrder is the fixed display order for EXIF-derived sections; a
+// section is only printed if it ended up with rows.
+var sectionOrder = []string{"Camera", "Image", "Capture", "GPS"}
+
+// buildSections assembles the File section (from OS-level file info) plus
+// the EXIF-derived sections tags bucket into via tagSection/sectionOrder.
+// Tags that don't match any known section (e.g. a future tag added to
+// exif/metadata.go without updating tagSection) land in a catch-all "EXIF"
+// section rather than being silently dropped.
+func buildSections(path string, info os.FileInfo, tags []exif.Tag, gps *exif.GPSInfo) []section {
+	sections := []section{{
+		name: "File",
+		rows: []row{
+			{"Path", path},
+			{"Size", strconv.FormatInt(info.Size(), 10) + " bytes"},
+			{"Permissions", info.Mode().String()},
+			{"ModTime", info.ModTime().Format(time.RFC3339)},
+		},
+	}}
+
+	byName := make(map[string][]row)
+	var fallback []row
 	for _, t := range tags {
-		if !started || t.Group != group {
-			if started {
-				fmt.Fprintln(tw)
+		name, ok := tagSection[t.Name]
+		if !ok {
+			if t.Group == exif.GroupGPS {
+				name = "GPS"
+			} else {
+				fallback = append(fallback, row{string(t.Name), formatTag(t)})
+				continue
 			}
-			fmt.Fprintf(tw, "[%s]\n", t.Group)
-			group, started = t.Group, true
 		}
-		fmt.Fprintf(tw, "  %s:\t%s\n", t.Name, formatTag(t))
+		byName[name] = append(byName[name], row{string(t.Name), formatTag(t)})
+	}
+	if gps != nil && (gps.Latitude != 0 || gps.Longitude != 0) {
+		byName["GPS"] = append(byName["GPS"],
+			row{"Google Maps", fmt.Sprintf("https://www.google.com/maps?q=%.6f,%.6f", gps.Latitude, gps.Longitude)},
+			row{"OpenStreetMap", fmt.Sprintf("https://www.openstreetmap.org/?mlat=%.6f&mlon=%.6f#map=17/%.6f/%.6f", gps.Latitude, gps.Longitude, gps.Latitude, gps.Longitude)},
+		)
+	}
+	for _, name := range sectionOrder {
+		if rows := byName[name]; len(rows) > 0 {
+			sections = append(sections, section{name, rows})
+		}
+	}
+	if len(fallback) > 0 {
+		sections = append(sections, section{"EXIF", fallback})
+	}
+	return sections
+}
+
+// printSections renders sections in order, tabwriter-aligned within a
+// single pass so key columns line up across the whole file's output.
+func printSections(w io.Writer, sections []section) {
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	for i, s := range sections {
+		if i > 0 {
+			fmt.Fprintln(tw)
+		}
+		fmt.Fprintf(tw, "[%s]\n", s.name)
+		for _, r := range s.rows {
+			fmt.Fprintf(tw, "  %s:\t%s\n", r.key, r.val)
+		}
 	}
 	tw.Flush()
 }
